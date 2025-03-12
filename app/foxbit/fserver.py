@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from typing import List
 
 from app.models import Balance, Order, Quota, TradingSetting, User
+from app.services.handle_non_executed_amount import handle_non_executed_amount
 
 from .foxbit import Foxbit
 from .constants import *
@@ -226,17 +227,25 @@ class FServer(object):
             brl_amount_cost = order.quantity_executed # taxes included
             btc_amount = order.quantity
             btc_amount_cost = order.quantity * order.price
-
-        if order.side == 'BUY' and order.order_state in ['PARTIALLY_CANCELED', 'FILLED']:
-            price = btc_amount_cost / btc_amount # taxes included
-            quota = Quota()
-            quota.purchase_order_id = order.id
-            quota.amount = btc_amount
-            quota.price = price
-            quota.user_id = order.user_id
-            quota.created_at = datetime.now()
-            quota.quota_state = 'ACTIVE'
-            quota.save()
+        
+        # Fix nested IFs and merge with the Above If-else
+        if order.side == 'BUY':
+            if order.order_state == 'PARTIALLY_CANCELED':
+                # Handle non-executed amount for partially canceled orders
+                non_executed_amount = order.quantity
+                handle_non_executed_amount(order.user_id, non_executed_amount, order.price)
+            
+            if order.order_state in ['PARTIALLY_CANCELED', 'FILLED']:
+                # Create quota for executed amount
+                price = btc_amount_cost / btc_amount # taxes included
+                quota = Quota()
+                quota.purchase_order_id = order.id
+                quota.amount = btc_amount
+                quota.price = price
+                quota.user_id = order.user_id
+                quota.created_at = datetime.now()
+                quota.quota_state = 'ACTIVE'
+                quota.save()
 
         balances: List[Balance] = Balance.where(user_id = [order.user_id])
         for balance in balances:
